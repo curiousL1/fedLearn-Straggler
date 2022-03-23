@@ -276,7 +276,7 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
 
     数量分布随机从min_train到max_train
 
-    每个client 80%数据为一类图片， 20%为其他类图片
+    每个client 80%（main_label_prop）数据为一类图片， 20%为其他类图片
 
     """
     # random_seed = np.random.randint(low=30000, high=40000)
@@ -286,9 +286,6 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
 
     num_shards, num_imgs = 10, 5000  # 10类图片，每类6000张
 
-    # min_train = 200  # 最少200张
-    # max_train = 1000  # 最多1000张
-    # main_label_prop = 0.8  # 80%来自同一张图片，20%均匀来自其他9类图片
 
     dict_users = {i: np.array([], dtype='int64') for i in range(num_users)}
     idxs = np.arange(num_shards * num_imgs)
