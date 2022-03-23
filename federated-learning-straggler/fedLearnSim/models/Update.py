@@ -31,14 +31,19 @@ class LocalUpdate(object):
         self.selected_clients = []
         self.ldr_train = DataLoader(DatasetSplit(dataset, idxs), batch_size=self.args.local_bs, shuffle=True)
 
-    def train(self, net):
+    def train(self, net, straggle=False, epoch=3):
         net.train()
         # train and update
         optimizer = torch.optim.SGD(net.parameters(), lr=self.args.lr, momentum=self.args.momentum)
         # optimizer = torch.optim.Adam(net.parameters(), lr=0.005)
 
+        local_ep = self.args.local_ep
+        if straggle==True:
+            local_ep = epoch
+
         epoch_loss = []
-        for iter in range(self.args.local_ep):
+        for iter in range(local_ep):
+            print("local epoch {} start".format(iter))
             batch_loss = []
             for batch_idx, (images, labels) in enumerate(self.ldr_train):
                 images, labels = images.to(self.args.device), labels.to(self.args.device)
