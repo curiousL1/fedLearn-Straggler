@@ -22,9 +22,8 @@ import sys
 import configuration as conf
 
 # 把 sys path 添加需要 import 的文件夹
-# sys.path.append(conf.ROOT_PATH + 'fedLearn/')
-sys.path.append(conf.ROOT_PATH)
-# print(sys.path)
+sys.path.append(conf.ROOT_PATH + 'fedLearn/')
+
 
 from fedLearnSim.utils.sampling import mnist_iid, cifar_iid, mnist_noniid, cifar_noniid
 from fedLearnSim.utils.sampling import mnist_iid_modified, cifar_iid_modified, mnist_noniid_modified
@@ -34,6 +33,225 @@ from fedLearnSim.models.Nets import MLP, CNNMnist, CNNCifar, CNNCifarPlus
 from fedLearnSim.models.resnet import ResNet
 from fedLearnSim.models.Fed import FedAvg, FedAvgV1
 from fedLearnSim.models.test import test_img
+
+
+def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="valid_list_linucb.txt",
+                     args_dataset='mnist', args_usernumber=100, args_iid=False, map_file=None, threshold_K=7):
+    # load args
+    args = args_parser()
+    args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+    # load args
+
+    # 调参
+    args.local_bs = 20
+    args.local_ep = 4
+
+    print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
+
+    print("load dataset")
+    #####################################################################################################################
+    #####################################################################################################################
+    # load dataset
+    args.dataset    = args_dataset
+    args.num_users  = args_usernumber
+    args.iid        = args_iid                 # non-iid
+    if args.dataset == 'mnist':
+        print("mnist dataset!")
+        trans_mnist     = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
+        dataset_train   = datasets.MNIST('../data/mnist/', train=True, download=True, transform=trans_mnist)
+        dataset_test    = datasets.MNIST('../data/mnist/', train=False, download=True, transform=trans_mnist)
+        # sample users (100)
+        # args.iid = True
+        if args.iid:        # 好像没看见 non-iid 的代码
+            print("args.iid is true")
+            # dict_users = mnist_iid(dataset_train, args.num_users)
+            dict_users = mnist_iid_modified(dataset_train, args.num_users)
+        else:
+            print("args.iid is false, non-iid")
+            # dict_users = mnist_noniid(dataset_train, args.num_users)
+            dict_users = mnist_noniid_modified(dataset_train, args.num_users,
+                                               main_label_prop=0.8, other=9, map_file=map_file)
+            print("args.iid is false, non-iid")
+    elif args.dataset == 'cifar':
+        print("cifar dataset!")
+        trans_cifar = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        dataset_train = datasets.CIFAR10('../data/cifar', train=True, download=True, transform=trans_cifar)
+        dataset_test = datasets.CIFAR10('../data/cifar', train=False, download=True, transform=trans_cifar)
+        if args.iid:
+            print("cifar iid")
+            # dict_users = cifar_iid(dataset_train, args.num_users)
+            dict_users = cifar_iid_modified(dataset_train, args.num_users)
+            # print("dict_users: ", type(dict_users))
+            # print(dict_users)
+        else:
+            print("cifar non-iid")
+            dict_users = cifar_noniid(dataset_train, args.num_users,
+                                      min_train=200, max_train=1000, main_label_prop=0.8, other=9, map_file=map_file)
+    else:
+        exit('Error: unrecognized dataset')
+    # load dataset
+    #####################################################################################################################
+    #####################################################################################################################
+
+    img_size = dataset_train[0][0].shape
+
+    print("build model")
+    #####################################################################################################################
+    #####################################################################################################################
+    # build model
+    args.model = args_model
+    if args.model == 'cnn' and args.dataset == 'cifar':
+        print("cnn & cifar")
+        # global_net = CNNCifar(args=args).to(args.device)
+        global_net = CNNCifarPlus(args=args).to(args.device)
+    elif args.model == 'cnn' and args.dataset == 'mnist':
+        print("cnn & mnist")
+        args.num_channels = 1
+        global_net = CNNMnist(args=args).to(args.device)
+    elif args.model == 'mlp':
+        print("mlp & cifar")
+        len_in = 1
+        for x in img_size:
+            len_in *= x
+        global_net = MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes).to(args.device)
+    elif args.model == 'resnet' and args.dataset == 'cifar':
+        global_net = ResNet(18, num_classes=10).to(args.device)
+        # print("resnet:\n", global_net)
+    else:
+        exit('Error: unrecognized model')
+    # build model
+    #####################################################################################################################
+    #####################################################################################################################
+
+    print("global_net:\n", global_net)
+
+    global_net.train()
+
+    # copy weights
+    w_glob = global_net.state_dict()
+
+    # 这几个最后保存为txt
+    loss_avg_client  = []
+    acc_global_model = []
+    valid_number_list     = []
+
+    #####################################################################################################################
+    # warm up n_ep epoch
+    n_ep = 2
+    for round in range(n_ep):
+        print("warm-up round {} start:".format(round))
+
+        loss_locals = []
+        if not args.all_clients:
+            w_locals = []
+            w_locals_strag = []
+
+        # 全部参与训练
+        user_idx_this_round = np.arange(0, args.num_users, 1)
+        print("(warm up)user_idx_this_round:", user_idx_this_round)
+
+        if len(user_idx_this_round) > 0:
+            total_data_sum = 0  # 所有设备datasize相加
+            for ix in user_idx_this_round:
+                total_data_sum += len(dict_users[ix])
+            print("total_data_sum: ", total_data_sum)
+
+            # Local Training start
+            for idx in user_idx_this_round:     # 遍历可选的设备
+                print("user {} local training".format(idx))
+                local = LocalUpdate(args=args, dataset=dataset_train,
+                                    idxs=dict_users[idx])
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
+                if args.all_clients:
+                    w_locals[idx] = copy.deepcopy(weight)
+                else:
+                    w_locals.append(copy.deepcopy(weight))      # append    # 根据user_idx_this_round的顺序 append 上去
+                loss_locals.append(copy.deepcopy(loss))
+            # Local Training end
+
+            # On Server:
+            # Global Model Aggregation 
+            w_glob = FedAvgV1(w=w_locals, total_data_sum=total_data_sum,
+                            user_idx_this_round=user_idx_this_round,
+                            dict_users=dict_users)   
+
+            # copy weight to net_glob
+            global_net.load_state_dict(w_glob)
+
+            # print loss
+            loss_avg = sum(loss_locals) / len(loss_locals)
+            loss_avg_client.append(loss_avg)
+            acc_test, loss_test = test_img(global_net, dataset_test, args)
+            acc_global_model.append(acc_test)
+            # last_loss_avg = loss_avg
+            # last_acc_global = acc_test
+            print('K-SGD(warm): Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
+                  .format(round, loss_avg, acc_test, len(user_idx_this_round)))
+    ###################################################################################################
+    ###################################################################################################
+    # K-SGD 
+    w_compensation = OrderedDict()
+    args.epochs = 4           # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
+    print("args.epochs: ", args.epochs)
+    for round in range(args.epochs):
+        print("round {} start:".format(round))
+
+        loss_locals = []
+        if not args.all_clients:
+            w_locals = []
+            w_locals_strag = []
+
+        # 随机产生离群者
+        user_idx = np.arange(0, args.num_users, 1)
+        user_idx_this_round = np.random.choice(range(args.num_users), threshold_K, replace=False)  # 在num_users里面选K个
+        user_idx_Straggle = np.setdiff1d(user_idx, user_idx_this_round, assume_unique=True)
+        
+        print("user_idx:", user_idx)
+        print("user_idx_this_round:", user_idx_this_round)
+        print("user_idx_Straggle:", user_idx_Straggle)
+
+        if len(user_idx_this_round) > 0:
+            total_data_sum = 0  # 所有（非离群）设备datasize相加
+            total_strag_data_sum = 0  # 所有（离群）设备datasize相加
+            for ix in user_idx_this_round:
+                total_data_sum += len(dict_users[ix])
+            for ix in user_idx_Straggle:
+                total_strag_data_sum += len(dict_users[ix])
+            print("total_data_sum: ", total_data_sum)
+            print("total_strag_data_sum: ", total_strag_data_sum)
+
+            # Local Training start
+            for idx in user_idx_this_round:     # 遍历可选的设备
+                # print("dict_user[%d]: ", idx, dict_users[idx])      # 每行[idx]的elements个数不定，一维的list
+                print("user {} local training".format(idx))
+
+                local = LocalUpdate(args=args, dataset=dataset_train,
+                                    idxs=dict_users[idx])
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
+                if args.all_clients:
+                    w_locals[idx] = copy.deepcopy(weight)
+                else:
+                    w_locals.append(copy.deepcopy(weight))      # append    # 根据user_idx_this_round的顺序 append 上去
+                loss_locals.append(copy.deepcopy(loss))
+            # Local Training end
+
+            # On Server:
+            # Global Model Aggregation 
+            w_glob = FedAvgV1(w=w_locals, total_data_sum=total_data_sum,
+                            user_idx_this_round=user_idx_this_round,
+                            dict_users=dict_users)   
+
+            # copy weight to net_glob
+            global_net.load_state_dict(w_glob)
+                   
+            # print loss
+            loss_avg = sum(loss_locals) / len(loss_locals)
+            loss_avg_client.append(loss_avg)
+            acc_test, loss_test = test_img(global_net, dataset_test, args)
+            acc_global_model.append(acc_test)
+            print('K-SGD: Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
+                  .format(round, loss_avg, acc_test, len(user_idx_this_round)))
+
 
 
 def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_list_linucb.txt",
@@ -128,7 +346,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
         global_net = MLP(dim_in=len_in, dim_hidden=200, dim_out=args.num_classes).to(args.device)
     elif args.model == 'resnet' and args.dataset == 'cifar':
         global_net = ResNet(18, num_classes=10).to(args.device)
-        print("resnet:\n", global_net)
+        # print("resnet:\n", global_net)
     else:
         exit('Error: unrecognized model')
     # build model
@@ -144,7 +362,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 
     # copy weights
     w_glob = global_net.state_dict()
-    w_compensation = OrderedDict()
 
     # 这几个最后保存为txt
     loss_avg_client  = []
@@ -160,9 +377,64 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 
     # last_loss_avg = 0
     # last_acc_global = 0
+    #####################################################################################################################
+    # warm up n_ep epoch
+    n_ep = 2
+    for round in range(n_ep):
+        print("warm-up round {} start:".format(round))
 
-    args.epochs = 3           # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
-    print("args.epochs: ", args.epochs)                  # default --> 10
+        loss_locals = []
+        if not args.all_clients:
+            w_locals = []
+            w_locals_strag = []
+
+        # 全部参与训练
+        user_idx_this_round = np.arange(0, args.num_users, 1)
+        print("(warm up)user_idx_this_round:", user_idx_this_round)
+
+        if len(user_idx_this_round) > 0:
+            total_data_sum = 0  # 所有设备datasize相加
+            for ix in user_idx_this_round:
+                total_data_sum += len(dict_users[ix])
+            print("total_data_sum: ", total_data_sum)
+
+            # Local Training start
+            for idx in user_idx_this_round:     # 遍历可选的设备
+                print("user {} local training".format(idx))
+                local = LocalUpdate(args=args, dataset=dataset_train,
+                                    idxs=dict_users[idx])
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
+                if args.all_clients:
+                    w_locals[idx] = copy.deepcopy(weight)
+                else:
+                    w_locals.append(copy.deepcopy(weight))      # append    # 根据user_idx_this_round的顺序 append 上去
+                loss_locals.append(copy.deepcopy(loss))
+            # Local Training end
+
+            # On Server:
+            # Global Model Aggregation 
+            w_glob = FedAvgV1(w=w_locals, total_data_sum=total_data_sum,
+                            user_idx_this_round=user_idx_this_round,
+                            dict_users=dict_users)   
+
+            # copy weight to net_glob
+            global_net.load_state_dict(w_glob)
+
+            # print loss
+            loss_avg = sum(loss_locals) / len(loss_locals)
+            loss_avg_client.append(loss_avg)
+            acc_test, loss_test = test_img(global_net, dataset_test, args)
+            acc_global_model.append(acc_test)
+            # last_loss_avg = loss_avg
+            # last_acc_global = acc_test
+            print('LGC-SGD(warm): Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
+                  .format(round, loss_avg, acc_test, len(user_idx_this_round)))
+    ###################################################################################################
+    ###################################################################################################
+    # LGC-SGD 
+    w_compensation = OrderedDict()
+    args.epochs = 4           # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
+    print("args.epochs: ", args.epochs)
     for round in range(args.epochs):
         print("round {} start:".format(round))
 
@@ -191,7 +463,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
         # print("user_idx_this_round:\n", user_idx_this_round)
         if len(user_idx_this_round) > 0:
             total_data_sum = 0  # 所有（非离群）设备datasize相加
-            total_strag_data_sum = 0  # 所有（非离群）设备datasize相加
+            total_strag_data_sum = 0  # 所有（离群）设备datasize相加
             for ix in user_idx_this_round:
                 total_data_sum += len(dict_users[ix])
             for ix in user_idx_Straggle:
@@ -201,9 +473,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 
             # Local Training start
             for idx in user_idx_this_round:     # 遍历可选的设备
-                # local updates?
-                # print("dataset_train: ", dataset_train.shape)
-
                 # print("dict_user[%d]: ", idx, dict_users[idx])      # 每行[idx]的elements个数不定，一维的list
                 print("user {} local training".format(idx))
 
@@ -219,13 +488,12 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 
             # Straggler Training start  # 与上面（原本）的训练代码一样，在train中加了epoch选项
             for idx in user_idx_Straggle:     # 遍历Straggle的设备
-
                 # print("dict_user[%d]: ", idx, dict_users[idx])
                 print("straggler user {} local training".format(idx))
 
                 local = LocalUpdate(args=args, dataset=dataset_train,
                                     idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=True, epoch=3) # global_net未更新，且只训练 2 epoch
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=True, epoch=3) # 只训练 3 epoch
                 if args.all_clients:
                     w_locals_strag[idx] = copy.deepcopy(weight)
                 else:
@@ -253,11 +521,15 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 
             #####################################
             # todo:依据（上一轮的） w_locals_strag，w_glob 计算出 compensation
+            # 算法中属于下一 round 放在此处可以避免更多变量的声明
             w_strag = FedAvgV1(w=w_locals_strag, total_data_sum=total_strag_data_sum,
                             user_idx_this_round=user_idx_Straggle, 
-                            dict_users=dict_users)
-            w_left = W_Mul(1.0 / args.num_users, w_strag)
-            w_right = W_Mul(float((args.num_users - threshold_K) / args.num_users), w_glob)
+                            dict_users=dict_users) # 离群者训练梯度的求和（加权）平均
+            # w_left = W_Mul((threshold_K / args.num_users), w_strag)
+            # w_right = W_Mul((float(args.num_users - threshold_K) / args.num_users), w_glob)
+            # K -> total_data_sum, N-K -> total_strag_data_sum
+            w_left = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_strag)
+            w_right = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_glob)
             w_compensation = W_Sub(w_left, w_right)
             #####################################
             
@@ -269,7 +541,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
             acc_global_model.append(acc_test)
             # last_loss_avg = loss_avg
             # last_acc_global = acc_test
-            print('Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
+            print('LGC-SGD: Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
                   .format(round, loss_avg, acc_test, len(user_idx_this_round)))
         # else:
         #     print('Round {:3d}, Average loss {:.3f}, Global acc: {:.3f} 0 !'
@@ -303,6 +575,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 def multiSimulateMain():
 
     # 设置一共10个，然后随机从10个里面选7个
+    FedLearnSimulateKSGD(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
     FedLearnSimulate(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
 
     print("multi-simulation end")
