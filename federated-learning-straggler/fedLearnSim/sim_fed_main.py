@@ -22,17 +22,17 @@ import sys
 import configuration as conf
 
 # 把 sys path 添加需要 import 的文件夹
-sys.path.append(conf.ROOT_PATH + 'fedLearn/')
+# sys.path.append(conf.ROOT_PATH + 'fedLearn/')
 
 
-from fedLearnSim.utils.sampling import mnist_iid, cifar_iid, mnist_noniid, cifar_noniid
-from fedLearnSim.utils.sampling import mnist_iid_modified, cifar_iid_modified, mnist_noniid_modified
-from fedLearnSim.utils.options import args_parser
-from fedLearnSim.models.Update import LocalUpdate
-from fedLearnSim.models.Nets import MLP, CNNMnist, CNNCifar, CNNCifarPlus
-from fedLearnSim.models.resnet import ResNet
-from fedLearnSim.models.Fed import FedAvg, FedAvgV1
-from fedLearnSim.models.test import test_img
+from utils.sampling import mnist_iid, cifar_iid, mnist_noniid, cifar_noniid
+from utils.sampling import mnist_iid_modified, cifar_iid_modified, mnist_noniid_modified
+from utils.options import args_parser
+from models.Update import LocalUpdate
+from models.Nets import MLP, CNNMnist, CNNCifar, CNNCifarPlus
+from models.resnet import ResNet
+from models.Fed import FedAvg, FedAvgV1
+from models.test import test_img
 
 
 def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="valid_list_linucb.txt",
@@ -41,10 +41,6 @@ def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="va
     args = args_parser()
     args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
     # load args
-
-    # 调参
-    args.local_bs = 20
-    args.local_ep = 4
 
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
@@ -75,14 +71,12 @@ def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="va
     elif args.dataset == 'cifar':
         print("cifar dataset!")
         trans_cifar = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset_train = datasets.CIFAR10('../data/cifar', train=True, download=True, transform=trans_cifar)
-        dataset_test = datasets.CIFAR10('../data/cifar', train=False, download=True, transform=trans_cifar)
+        dataset_train = datasets.CIFAR10('./data/cifar', train=True, download=True, transform=trans_cifar)
+        dataset_test = datasets.CIFAR10('./data/cifar', train=False, download=True, transform=trans_cifar)
         if args.iid:
             print("cifar iid")
             # dict_users = cifar_iid(dataset_train, args.num_users)
             dict_users = cifar_iid_modified(dataset_train, args.num_users)
-            # print("dict_users: ", type(dict_users))
-            # print(dict_users)
         else:
             print("cifar non-iid")
             dict_users = cifar_noniid(dataset_train, args.num_users,
@@ -190,8 +184,7 @@ def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="va
     ###################################################################################################
     ###################################################################################################
     # K-SGD 
-    w_compensation = OrderedDict()
-    args.epochs = 4           # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
+    # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
     print("args.epochs: ", args.epochs)
     for round in range(args.epochs):
         print("round {} start:".format(round))
@@ -199,7 +192,6 @@ def FedLearnSimulateKSGD(alg_str='linucb', args_model='cnn', valid_list_path="va
         loss_locals = []
         if not args.all_clients:
             w_locals = []
-            w_locals_strag = []
 
         # 随机产生离群者
         user_idx = np.arange(0, args.num_users, 1)
@@ -270,11 +262,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
     # load args
     args = args_parser()
     args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
-    # load args
-
-    # 调参
-    args.local_bs = 20
-    args.local_ep = 4
 
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
@@ -290,8 +277,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
         trans_mnist     = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
         dataset_train   = datasets.MNIST('../data/mnist/', train=True, download=True, transform=trans_mnist)
         dataset_test    = datasets.MNIST('../data/mnist/', train=False, download=True, transform=trans_mnist)
-        # sample users (100)
-        # args.iid = True
+
         if args.iid:        # 好像没看见 non-iid 的代码
             print("args.iid is true")
             # dict_users = mnist_iid(dataset_train, args.num_users)
@@ -305,14 +291,12 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
     elif args.dataset == 'cifar':
         print("cifar dataset!")
         trans_cifar = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-        dataset_train = datasets.CIFAR10('../data/cifar', train=True, download=True, transform=trans_cifar)
-        dataset_test = datasets.CIFAR10('../data/cifar', train=False, download=True, transform=trans_cifar)
+        dataset_train = datasets.CIFAR10('./data/cifar', train=True, download=True, transform=trans_cifar)
+        dataset_test = datasets.CIFAR10('./data/cifar', train=False, download=True, transform=trans_cifar)
         if args.iid:
             print("cifar iid")
             # dict_users = cifar_iid(dataset_train, args.num_users)
             dict_users = cifar_iid_modified(dataset_train, args.num_users)
-            # print("dict_users: ", type(dict_users))
-            # print(dict_users)
         else:
             print("cifar non-iid")
             dict_users = cifar_noniid(dataset_train, args.num_users,
@@ -356,9 +340,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
     print("global_net:\n", global_net)
 
     global_net.train()
-
-    # start time
-    # time_start = time.time()
 
     # copy weights
     w_glob = global_net.state_dict()
@@ -433,7 +414,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
     ###################################################################################################
     # LGC-SGD 
     w_compensation = OrderedDict()
-    args.epochs = 4           # 默认是10，现在设置成200，测试一下 cifar-10 准确率能到多少——Jan 17 2022 23:19:50
+
     print("args.epochs: ", args.epochs)
     for round in range(args.epochs):
         print("round {} start:".format(round))
@@ -442,9 +423,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
         if not args.all_clients:
             w_locals = []
             w_locals_strag = []
-        # round_idx = valid_list[round]       # valid_list 两百行 --> 200 round      即 round_idx是单独一行（one round）的数据（10个数值）
-        # user_idx_this_round = round_idx[np.where(round_idx != -1)]      # 一行数据中，等于-1的不选，其它的选上
-        # print("user_idx_this_round:\n", user_idx_this_round)
 
         # 随机产生离群者
         user_idx = np.arange(0, args.num_users, 1)
@@ -455,13 +433,8 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
         print("user_idx_this_round:", user_idx_this_round)
         print("user_idx_Straggle:", user_idx_Straggle)
 
-        # print("dict_user:\n", type(dict_users), '\n', dict_users)
-        # total_data_sum = 0      # 所有设备datasize相加
-        # for i in range(len(dict_users)):        # 每行dict_user[idx]的长度，就代表了数据量
-        #     total_data_sum += len(dict_users[i])
-        # valid_number_list.append(user_idx_this_round)   # 每轮valid participants 数量
-        # print("user_idx_this_round:\n", user_idx_this_round)
         if len(user_idx_this_round) > 0:
+            # 计算 datasize
             total_data_sum = 0  # 所有（非离群）设备datasize相加
             total_strag_data_sum = 0  # 所有（离群）设备datasize相加
             for ix in user_idx_this_round:
@@ -486,7 +459,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
                 loss_locals.append(copy.deepcopy(loss))
             # Local Training end
 
-            # Straggler Training start  # 与上面（原本）的训练代码一样，在train中加了epoch选项
+            # Straggler Training start  # 与上面的训练代码一样，在train中加了epoch选项
             for idx in user_idx_Straggle:     # 遍历Straggle的设备
                 # print("dict_user[%d]: ", idx, dict_users[idx])
                 print("straggler user {} local training".format(idx))
@@ -514,7 +487,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
             else:
                 w_glob_comped = W_Add(w_glob, w_compensation)
             #########################################
-            # w_glob_comped = w_glob # test K-SGD
 
             # copy weight to net_glob
             global_net.load_state_dict(w_glob_comped)
@@ -524,10 +496,11 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
             # 算法中属于下一 round 放在此处可以避免更多变量的声明
             w_strag = FedAvgV1(w=w_locals_strag, total_data_sum=total_strag_data_sum,
                             user_idx_this_round=user_idx_Straggle, 
-                            dict_users=dict_users) # 离群者训练梯度的求和（加权）平均
-            # w_left = W_Mul((threshold_K / args.num_users), w_strag)
+                            dict_users=dict_users) # 离群者训练梯度的求和（datasize加权）平均
+            # 不考虑 datasize
+            # w_left = W_Mul(float(args.num_users - threshold_K) / args.num_users), w_strag)
             # w_right = W_Mul((float(args.num_users - threshold_K) / args.num_users), w_glob)
-            # K -> total_data_sum, N-K -> total_strag_data_sum
+            # 考虑 datasize：K -> total_data_sum, N-K -> total_strag_data_sum
             w_left = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_strag)
             w_right = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_glob)
             w_compensation = W_Sub(w_left, w_right)
@@ -553,10 +526,6 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
     #####################################################################################################################
     #####################################################################################################################
 
-
-    # time_end = time.time()
-    # print('totally cost time: {:3f}s'.format(time_end - time_start))
-
     # # plot loss curve
     # plt.figure()
     # plt.plot(range(len(loss_avg_client)), loss_avg_client)
@@ -575,7 +544,7 @@ def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_
 def multiSimulateMain():
 
     # 设置一共10个，然后随机从10个里面选7个
-    FedLearnSimulateKSGD(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
+    # FedLearnSimulateKSGD(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
     FedLearnSimulate(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
 
     print("multi-simulation end")

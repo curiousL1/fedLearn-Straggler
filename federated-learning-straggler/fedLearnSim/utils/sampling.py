@@ -293,8 +293,8 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
     dict_users = {i: np.array([], dtype='int64') for i in range(num_users)}
     idxs = np.arange(num_shards * num_imgs)
 
-    # labels = np.array(dataset.targets)  # 修改dataset.target_transform无法解决
-    labels = np.array(dataset.train_labels)   # 上面的labels改为这一行的labels（模仿mnist）
+    labels = np.array(dataset.targets)  # 修改dataset.target_transform无法解决
+    # labels = np.array(dataset.train_labels)   # 上面的labels改为这一行的labels（模仿mnist）
     print("labels:\n", labels)
     print("len: ", len(labels))
     print(type(labels))
