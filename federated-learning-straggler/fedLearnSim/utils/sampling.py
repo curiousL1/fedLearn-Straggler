@@ -312,7 +312,8 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
         datasize = np.random.randint(min_train, max_train + 1)  # 随机数量
         # datasize = int(map_file.iloc[i, map_file.columns.get_loc('datasize')])
         # main_label = int(map_file.iloc[i, map_file.columns.get_loc('main_label')])    # 已经确定好的
-        main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        # main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        main_label = i % 10 # 均匀分配10个主类到10*N个worker
         print("user: %d, data_size: %d, main_label: %d" % (i, datasize, main_label))
         # df.loc[i, ['main_label']] = main_label
 

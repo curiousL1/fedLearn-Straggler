@@ -2,7 +2,7 @@
 Created on March 9 2022 14:52:43
 @author(s): HuangLab
 '''
-from typing import OrderedDict
+from collections import OrderedDict
 import matplotlib
 # matplotlib.use('Agg')  # 绘图不显示
 
@@ -15,6 +15,7 @@ import torch
 from torchvision import transforms, datasets
 
 import time
+import datetime
 
 import sys
 import configuration as conf
@@ -27,6 +28,7 @@ from utils.sampling import mnist_iid, cifar_iid, mnist_noniid, cifar_noniid
 from utils.sampling import mnist_iid_modified, cifar_iid_modified, mnist_noniid_modified
 from utils.timeSim import Client_Sim, Find_stragglers_id_and_time_thres, Get_local_epoch
 from utils.options import args_parser
+from utils.write import WriteToTxt
 from models.Update import LocalUpdate
 from models.Nets import MLP, CNNMnist, CNNCifar, CNNCifarPlus
 from models.resnet import ResNet
@@ -37,12 +39,13 @@ from models.test import test_img
 # def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_list_linucb.txt",
 #                      args_dataset='mnist', args_usernumber=100, args_iid=False, map_file=None,
 #                       threshold_K=7, isKSGD=False, isFullSGD=False):
-def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record.txt", 
+def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record", 
                     args_usernumber=10, args_iid=False, map_file=None, 
-                    threshold_K=7, strag_h=1, isKSGD=False, isFullSGD=False):
+                    threshold_K=7, strag_h=1, other_class=9, isKSGD=False, isFullSGD=False):
     '''
     这个函数是执行 Federated Learning Simulation 的 main 函数
     '''
+    WriteToTxt(datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y") + "\n", record_name)
     # 保存文本的时候使用，此时是 LinUCB 方法
     # result_str = alg_str
 
@@ -57,7 +60,12 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
 
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
+    WriteToTxt("K-SGD? {}, Full-SGD? {}\n".format(isKSGD, isFullSGD), record_name)
+    WriteToTxt("usernumber is {}, threshold_K is {}, Straggling Period is {}\n".format(args_usernumber, threshold_K, strag_h), record_name)
+    WriteToTxt("Model is {}, dataset is {}, one worker has {} other + 1 main classes, is IID? {}\n".format(args_model, args_dataset, other_class, args_iid), record_name)
+    WriteToTxt("{} rounds, {} local epoch \n".format(args.epochs, args.local_ep, other_class), record_name)
     print("load dataset")
+    
     #####################################################################################################################
     #####################################################################################################################
     # load dataset
@@ -78,7 +86,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
             print("args.iid is false, non-iid")
             # dict_users = mnist_noniid(dataset_train, args.num_users)
             dict_users = mnist_noniid_modified(dataset_train, args.num_users,
-                                               main_label_prop=0.8, other=9, map_file=map_file)
+                                               main_label_prop=0.8, other=other_class, map_file=map_file)
             print("args.iid is false, non-iid")
     elif args.dataset == 'cifar':
         print("cifar dataset!")
@@ -92,7 +100,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
         else:
             print("cifar non-iid")
             dict_users = cifar_noniid(dataset_train, args.num_users,
-                                      min_train=800, max_train=1000, main_label_prop=0.8, other=9, map_file=map_file)
+                                      min_train=2000, max_train=2100, main_label_prop=0.8, other=other_class, map_file=map_file)
     else:
         exit('Error: unrecognized dataset')
     # load dataset
@@ -209,6 +217,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
             # acc_global_model.append(acc_test)
             print('(warm-up): Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
                   .format(round, loss_avg, acc_test, len(user_idx_this_round)))
+            WriteToTxt('(warm-up): Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}'
+                  .format(round, loss_avg, acc_test, len(user_idx_this_round)) + "\n", record_name)
     ###################################################################################################
     ###################################################################################################
     # train start (Default is LGC_SGD)
@@ -340,8 +350,11 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
             else:
                 print("LGC-SGD",end=" ")
 
-            print('Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}, time {}'
+            print("Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}, time {:.2f}"
                   .format(round, loss_avg, acc_test, len(user_idx_this_round), timer))
+            WriteToTxt("Round {:3d}, Average loss {:.3f}, Global acc: {:.3f}, valid {:3d}, time {:.2f}"
+                  .format(round, loss_avg, acc_test, len(user_idx_this_round), timer) + "\n", record_name)
+            
         # else:
         #     print('Round {:3d}, Average loss {:.3f}, Global acc: {:.3f} 0 !'
         #           .format(round, last_loss_avg, last_acc_global))
@@ -371,9 +384,11 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_path="record
 
 def multiSimulateMain():
     # 参数：1. 三种模式 2. Straggling Period 3. 数据集&网络？ 4.用户数10/20/40... 5. 数据分布iid 
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False)
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False, isKSGD=True)
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', args_usernumber=10, args_iid=False, isFullSGD=True)
+    # args_model='cnn', args_dataset='mnist', record_name="record", args_usernumber=10, args_iid=False, 
+    # map_file=None, threshold_K=7, strag_h=1, isKSGD=False, isFullSGD=False)
+    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="lgc_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3)
+    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="K_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3, isKSGD=True)
+    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="Full_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3, isFullSGD=True)
 
     print("multi-simulation end")
 
