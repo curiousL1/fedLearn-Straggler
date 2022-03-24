@@ -41,7 +41,7 @@ from models.test import test_img
 #                       threshold_K=7, isKSGD=False, isFullSGD=False):
 def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record", 
                     args_usernumber=10, args_iid=False, map_file=None, 
-                    threshold_K=7, strag_h=1, other_class=9, isKSGD=False, isFullSGD=False):
+                    threshold_K=7, strag_h=1, other_class=9, isKSGD=False, isFullSGD=False, hasTimer=True):
     '''
     这个函数是执行 Federated Learning Simulation 的 main 函数
     '''
@@ -57,6 +57,10 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # load args
     args = args_parser()
     args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+    args.model = args_model
+    args.dataset    = args_dataset
+    args.num_users  = args_usernumber
+    args.iid        = args_iid                 # non-iid
 
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
@@ -68,15 +72,12 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     
     #####################################################################################################################
     #####################################################################################################################
-    # load dataset
-    args.dataset    = args_dataset
-    args.num_users  = args_usernumber
-    args.iid        = args_iid                 # non-iid
+    # load dataset 
     if args.dataset == 'mnist':
         print("mnist dataset!")
         trans_mnist     = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.1307,), (0.3081,))])
-        dataset_train   = datasets.MNIST('../data/mnist/', train=True, download=True, transform=trans_mnist)
-        dataset_test    = datasets.MNIST('../data/mnist/', train=False, download=True, transform=trans_mnist)
+        dataset_train   = datasets.MNIST('./data/mnist/', train=True, download=True, transform=trans_mnist)
+        dataset_test    = datasets.MNIST('./data/mnist/', train=False, download=True, transform=trans_mnist)
 
         if args.iid:        # 好像没看见 non-iid 的代码
             print("args.iid is true")
@@ -85,7 +86,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
         else:
             print("args.iid is false, non-iid")
             # dict_users = mnist_noniid(dataset_train, args.num_users)
-            dict_users = mnist_noniid_modified(dataset_train, args.num_users,
+            dict_users = mnist_noniid_modified(dataset_train, args.num_users, min_train=2000, max_train=2000,
                                                main_label_prop=0.8, other=other_class, map_file=map_file)
             print("args.iid is false, non-iid")
     elif args.dataset == 'cifar':
@@ -100,7 +101,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
         else:
             print("cifar non-iid")
             dict_users = cifar_noniid(dataset_train, args.num_users,
-                                      min_train=2000, max_train=2100, main_label_prop=0.8, other=other_class, map_file=map_file)
+                                      min_train=2000, max_train=2000, main_label_prop=0.8, other=other_class, map_file=map_file)
     else:
         exit('Error: unrecognized dataset')
     # load dataset
@@ -122,7 +123,6 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # build model
     print("build model")
     img_size = dataset_train[0][0].shape
-    args.model = args_model
     if args.model == 'cnn' and args.dataset == 'cifar':
         print("cnn & cifar")
         # global_net = CNNCifar(args=args).to(args.device)
@@ -291,7 +291,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
                                                     idx=idx, local_ep=args.local_ep, round=round_h)
                 local = LocalUpdate(args=args, dataset=dataset_train,
                                     idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=True, epoch=strag_local_epoch)
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=hasTimer, epoch=strag_local_epoch)
                 if args.all_clients:
                     w_locals_strag[idx] = copy.deepcopy(weight)
                 else:
@@ -366,6 +366,13 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # training
     #####################################################################################################################
     #####################################################################################################################
+    # save data as file .npy
+    np_time_rounds = np.array(time_rounds)
+    np_loss_avg_client = np.array(loss_avg_client)
+    np_acc_global_model = np.array(acc_global_model)
+    np.save(record_name+"_time.npy", np_time_rounds)
+    np.save(record_name+"_loss.npy", np_loss_avg_client)
+    np.save(record_name+"_acc.npy", np_acc_global_model)
 
     # # plot loss curve
     # plt.figure()
@@ -382,15 +389,24 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # np_valid_number_list = np.array(valid_number_list)
 
 
-def multiSimulateMain():
-    # 参数：1. 三种模式 2. Straggling Period 3. 数据集&网络？ 4.用户数10/20/40... 5. 数据分布iid 
-    # args_model='cnn', args_dataset='mnist', record_name="record", args_usernumber=10, args_iid=False, 
-    # map_file=None, threshold_K=7, strag_h=1, isKSGD=False, isFullSGD=False)
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="lgc_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3)
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="K_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3, isKSGD=True)
-    FedLearnSimulate(args_dataset='cifar', args_model='resnet', record_name="Full_NiidcifarRes", args_usernumber=10, args_iid=False, strag_h=3, isFullSGD=True)
-
-    print("multi-simulation end")
+def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, user=10, iid=False):
+    # e.g. args_model='cnn', args_dataset='mnist', record_name="record", args_usernumber=10, args_iid=False
+    # e.g. map_file=None, threshold_K=7, strag_h=1, isKSGD=False, isFullSGD=False, hasTimer=True
+    
+    # 记录文件名  (+.txt/.npy)
+    other_c = c - 1
+    argsStr = dataset + model + 'C' + str(c) + 'H' + str(h) + 'N' + str(user)
+    if timer:
+        argsStr = argsStr + "Timer"
+    if iid:
+        argsStr = argsStr + "IID"
+    lgc_rc = "lgc_" + argsStr
+    k_rc = "k_" + argsStr
+    full_rc = "full_" + argsStr
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=lgc_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, hasTimer=timer)
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=k_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isKSGD=True, hasTimer=timer)
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=full_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isFullSGD=True, hasTimer=timer)
+    print(argsStr + " end")
 
 def w_Add(w1, w2):
     w = copy.deepcopy(w1) 
@@ -412,4 +428,7 @@ def w_Mul(n, w1):
 
 
 if __name__ == '__main__':
-    multiSimulateMain()
+    multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=3, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)

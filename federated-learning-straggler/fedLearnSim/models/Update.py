@@ -42,8 +42,9 @@ class LocalUpdate(object):
             local_ep = epoch
 
         epoch_loss = []
+        print("local epoch is {}".format(local_ep))
         for iter in range(local_ep):
-            print("local epoch {} start".format(iter))
+            # print("local epoch {} start".format(iter))
             batch_loss = []
             for batch_idx, (images, labels) in enumerate(self.ldr_train):
                 images, labels = images.to(self.args.device), labels.to(self.args.device)

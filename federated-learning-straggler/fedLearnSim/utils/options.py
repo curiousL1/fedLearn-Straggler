@@ -8,7 +8,7 @@ import argparse
 def args_parser():
     parser = argparse.ArgumentParser()
     # federated arguments
-    parser.add_argument('--epochs', type=int, default=50, help="rounds of training")
+    parser.add_argument('--epochs', type=int, default=60, help="rounds of training")
     parser.add_argument('--num_users', type=int, default=100, help="number of users: N")
     parser.add_argument('--frac', type=float, default=0.1, help="the fraction of clients: C")
     parser.add_argument('--local_ep', type=int, default=3, help="the number of local epochs: E")
