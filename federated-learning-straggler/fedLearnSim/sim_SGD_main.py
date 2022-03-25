@@ -29,30 +29,20 @@ from utils.sampling import mnist_iid_modified, cifar_iid_modified, mnist_noniid_
 from utils.timeSim import Client_Sim, Find_stragglers_id_and_time_thres, Get_local_epoch
 from utils.options import args_parser
 from utils.tools import WriteToTxt, W_Add, W_Mul, W_Sub
-from models.Update import LocalUpdate
+from models.Update import SGDLocalUpdate
 from models.Nets import MLP, CNNMnist, CNNCifar, CNNCifarPlus
 from models.resnet import ResNet
-from models.Fed import FedAvg, FedAvgV1
+from models.Fed import FedSGD
 from models.test import test_img
 
 
-# def FedLearnSimulate(alg_str='linucb', args_model='cnn', valid_list_path="valid_list_linucb.txt",
-#                      args_dataset='mnist', args_usernumber=100, args_iid=False, map_file=None,
-#                       threshold_K=7, isKSGD=False, isFullSGD=False):
 def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record", 
                     args_usernumber=10, args_iid=False, map_file=None, 
                     threshold_K=7, strag_h=1, other_class=9, isKSGD=False, isFullSGD=False, hasTimer=True):
     '''
-    这个函数是执行 Federated Learning Simulation 的 main 函数
+    这个函数是执行 FedSGD Learning Simulation 的 main 函数
     '''
     WriteToTxt(datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y") + "\n", record_name)
-    # 保存文本的时候使用，此时是 LinUCB 方法
-    # result_str = alg_str
-
-    # valid_list = np.loadtxt('noniid_valid/valid_list_fedcs.txt')
-    # valid_list = np.loadtxt('valid_list_linucb.txt')                # 这个是 iid 情况的 devices selection 文件
-    # valid_list = np.loadtxt(valid_list_path, encoding='utf_8_sig')
-    # 10*200 --> 猜测应该是 200 communication rounds，10个设备中每行（即每个round）设备数值不为-1的就可以挑选
 
     # load args
     args = args_parser()
@@ -64,10 +54,11 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
 
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
+    WriteToTxt("Using FedSGD training \n", record_name)
     WriteToTxt("K-SGD? {}, Full-SGD? {}\n".format(isKSGD, isFullSGD), record_name)
     WriteToTxt("usernumber is {}, threshold_K is {}, Straggling Period is {}\n".format(args_usernumber, threshold_K, strag_h), record_name)
     WriteToTxt("Model is {}, dataset is {}, one worker has {} other + 1 main classes, is IID? {}\n".format(args_model, args_dataset, other_class, args_iid), record_name)
-    WriteToTxt("{} rounds, {} local epoch \n".format(args.epochs, args.local_ep, other_class), record_name)
+    WriteToTxt("{} rounds, {} local partitions \n".format(args.epochs, args.local_pts), record_name)
     print("load dataset")
     
     #####################################################################################################################
@@ -111,8 +102,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # time simulate
     time_all_client = []
     for i in range(args.num_users):
-        miu_k = args.local_ep * len(dict_users[i]) * 0.5
-        client = Client_Sim(datasize=len(dict_users[i]), a_k=0.01, miu_k=miu_k, local_epoch=args.local_ep, rounds=args.epochs)
+        miu_k = 1 * len(dict_users[i]) * 0.5
+        client = Client_Sim(datasize=len(dict_users[i]), a_k=0.01, miu_k=miu_k, local_epoch=1, rounds=args.epochs)
         time_all_client.append(client.get_execution_time())
 
     timer = 0
@@ -155,28 +146,15 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     # 这几个最后保存为txt
     loss_avg_client  = []
     acc_global_model = []
-    valid_number_list= []
     time_rounds = []
 
-    #####################################################################################################################
-    #####################################################################################################################
-    # training
-    # if args.all_clients:
-    #     print("Aggregation over all clients")
-    #     w_locals = [w_glob for i in range(args.num_users)]
-
-    # last_loss_avg = 0
-    # last_acc_global = 0
-    #####################################################################################################################
-    # warm up n_ep epoch
     n_ep = 2
     for round in range(n_ep):
         print("warm-up round {} start:".format(round))
 
         loss_locals = []
         if not args.all_clients:
-            w_locals = []
-            w_locals_strag = []
+            grad_locals = []
 
         # 全部参与训练
         user_idx_this_round = np.arange(0, args.num_users, 1)
@@ -191,22 +169,20 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
             # Local Training start
             for idx in user_idx_this_round:     # 遍历可选的设备
                 print("user {} local training".format(idx))
-                local = LocalUpdate(args=args, dataset=dataset_train,
-                                    idxs=dict_users[idx])
+                local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
                 weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
+                grad = W_Sub(weight, global_net.state_dict())
                 if args.all_clients:
-                    w_locals[idx] = copy.deepcopy(weight)
+                    grad_locals[idx] = copy.deepcopy(grad)
                 else:
-                    w_locals.append(copy.deepcopy(weight))      # append    # 根据user_idx_this_round的顺序 append 上去
+                    grad_locals.append(copy.deepcopy(grad))      # append    # 根据user_idx_this_round的顺序 append 上去
                 loss_locals.append(copy.deepcopy(loss))
             # Local Training end
 
             # On Server:
             # Global Model Aggregation 
-            w_glob = FedAvgV1(w=w_locals, total_data_sum=total_data_sum,
-                            user_idx_this_round=user_idx_this_round,
-                            dict_users=dict_users)   
-
+            g_glob = FedSGD(g=grad_locals)
+            w_glob = W_Add(w_glob, g_glob)
             # copy weight to net_glob
             global_net.load_state_dict(w_glob)
 
@@ -222,8 +198,6 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     ###################################################################################################
     ###################################################################################################
     # train start (Default is LGC_SGD)
-    w_compensation = OrderedDict()
-    
     round_h = 0 # 配合 strag_h 形成 Straggling Period，使离群者保持离群 'strag_h' rounds
     print("args.epochs: ", args.epochs)
     for round in range(args.epochs):
@@ -231,8 +205,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
 
         loss_locals = []
         if not args.all_clients:
-            w_locals = []
-            w_locals_strag = []
+            grad_locals = []
+            grad_locals_strag = []
      
         user_idx = np.arange(0, args.num_users, 1)
         # 1. 离群者随机产生（测试用）
@@ -270,13 +244,13 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
                 # print("dict_user[%d]: ", idx, dict_users[idx])      # 每行[idx]的elements个数不定，一维的list
                 print("user {} local training".format(idx))
 
-                local = LocalUpdate(args=args, dataset=dataset_train,
-                                    idxs=dict_users[idx])
+                local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
                 weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
+                grad = W_Sub(weight, global_net.state_dict())
                 if args.all_clients:
-                    w_locals[idx] = copy.deepcopy(weight)
+                    grad_locals[idx] = copy.deepcopy(grad)
                 else:
-                    w_locals.append(copy.deepcopy(weight))      # append    # 根据user_idx_this_round的顺序 append 上去
+                    grad_locals.append(copy.deepcopy(grad))      # append    # 根据user_idx_this_round的顺序 append 上去
                 loss_locals.append(copy.deepcopy(loss))
             # Local Training end
 
@@ -287,48 +261,46 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
 
                 print("straggler user {} local training".format(idx))
 
-                strag_local_epoch = Get_local_epoch(times_all=time_all_client, round_time=time_thres, 
-                                                    idx=idx, local_ep=args.local_ep, round=round_h)
-                local = LocalUpdate(args=args, dataset=dataset_train,
-                                    idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=hasTimer, epoch=strag_local_epoch)
+                strag_local_pts = Get_local_epoch(times_all=time_all_client, round_time=time_thres, 
+                                                    idx=idx, local_ep=args.local_pts, round=round_h)
+                local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
+                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=hasTimer, pts=strag_local_pts)
+                grad = W_Sub(weight, global_net.state_dict())
                 if args.all_clients:
-                    w_locals_strag[idx] = copy.deepcopy(weight)
+                    grad_locals_strag[idx] = copy.deepcopy(grad)
                 else:
-                    w_locals_strag.append(copy.deepcopy(weight))     
+                    grad_locals_strag.append(copy.deepcopy(grad))     
                 loss_locals.append(copy.deepcopy(loss)) ############ loss_local是否需要为Straggler新建?
             # Straggler Training end
 
             # On Server:
             # Global Model Aggregation 
-            w_glob = FedAvgV1(w=w_locals, total_data_sum=total_data_sum,
-                            user_idx_this_round=user_idx_this_round,
-                            dict_users=dict_users)   
-
+            g_glob = FedSGD(g=grad_locals)
+            
             if isFullSGD or isKSGD:
+                w_glob = W_Add(w_glob, g_glob)
                 global_net.load_state_dict(w_glob)
             else:
                 # LGC:使用 compensation 进行补偿
                 if round == 0:
-                    w_glob_comped = copy.deepcopy(w_glob)
+                    g_glob_comped = copy.deepcopy(g_glob)
                 else:
-                    w_glob_comped = W_Add(w_glob, w_compensation)
+                    g_glob_comped = W_Sub(g_glob, g_compensation) # 依据求梯度的方式，符号应该是反的
 
                 # copy weight to net_glob
-                global_net.load_state_dict(w_glob_comped)
+                w_glob = W_Add(w_glob, g_glob_comped)
+                global_net.load_state_dict(w_glob)
 
-                # LGC:依据（上一轮的） w_locals_strag，w_glob 计算出 compensation
+                # LGC:依据（上一轮的） grad_locals_strag，w_glob 计算出 compensation
                 # 算法中属于下一 round，放在此处可以避免更多变量的声明
-                w_strag = FedAvgV1(w=w_locals_strag, total_data_sum=total_strag_data_sum,
-                                user_idx_this_round=user_idx_Straggle, 
-                                dict_users=dict_users) # 离群者训练梯度的求和（datasize加权）平均
+                g_strag = FedSGD(g=grad_locals_strag) # 离群者训练梯度的求和
                 # 1. 不考虑 datasize
-                # w_left = w_Mul(float(args.num_users - threshold_K) / args.num_users), w_strag)
-                # w_right = w_Mul((float(args.num_users - threshold_K) / args.num_users), w_glob)
+                g_left = W_Mul((float(args.num_users - threshold_K) / args.num_users), g_strag)
+                g_right = W_Mul((float(args.num_users - threshold_K) / args.num_users), g_glob)
                 # 2. 考虑 datasize：K -> total_data_sum, N-K -> total_strag_data_sum
-                w_left = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_strag)
-                w_right = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_glob)
-                w_compensation = W_Sub(w_left, w_right)
+                # w_left = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_strag)
+                # w_right = W_Mul(float(total_strag_data_sum) / (total_data_sum + total_strag_data_sum), w_glob)
+                g_compensation = W_Sub(g_left, g_right)
             #####################################
             # train end
 
@@ -395,7 +367,7 @@ def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, us
     
     # 记录文件名  (+.txt/.npy)
     other_c = c - 1
-    argsStr = dataset + model + 'C' + str(c) + 'H' + str(h) + 'N' + str(user)
+    argsStr = "SGD" + dataset + model + 'C' + str(c) + 'H' + str(h) + 'N' + str(user)
     if timer:
         argsStr = argsStr + "Timer"
     if iid:
@@ -411,12 +383,12 @@ def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, us
 
 if __name__ == '__main__':
     #################################### Exp.1
-    # multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False) #wrong
-    # multiSimulateMain(c=3, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False) #done
+    multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=3, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
     multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=30, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=5, h=1, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=5, h=30, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
 
     # multiSimulateMain(c=1, h=1, dataset='cifar', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=1, dataset='cifar', model='cnn', timer=False, user=10, iid=False)
@@ -434,12 +406,12 @@ if __name__ == '__main__':
     # multiSimulateMain(c=1, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=5, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=1, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=5, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=30, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=30, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
 
     ##########################done
     

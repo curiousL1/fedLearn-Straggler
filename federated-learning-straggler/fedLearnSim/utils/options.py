@@ -12,6 +12,7 @@ def args_parser():
     parser.add_argument('--num_users', type=int, default=100, help="number of users: N")
     parser.add_argument('--frac', type=float, default=0.1, help="the fraction of clients: C")
     parser.add_argument('--local_ep', type=int, default=3, help="the number of local epochs: E")
+    parser.add_argument('--local_pts', type=int, default=5, help="partition number of local data(SGD Training): S")
     parser.add_argument('--local_bs', type=int, default=16, help="local batch size: B")
     parser.add_argument('--bs', type=int, default=128, help="test batch size")
     parser.add_argument('--lr', type=float, default=0.02, help="learning rate")

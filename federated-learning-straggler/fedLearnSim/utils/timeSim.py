@@ -128,6 +128,7 @@ class Client_Sim():
 def Get_local_epoch(times_all, round_time, idx, local_ep, round=1):
     '''
     获取一个设备的某一round的本地epoch
+    SGD框架下则是本地可训练的partition数量
     '''
     time = times_all[idx][round - 1]
     epoch = math.floor(float(round_time / time) * local_ep)

@@ -7,7 +7,7 @@ import torchvision as tv
 from torch import nn, autograd
 from torch.utils.data import DataLoader, Dataset
 import numpy as np
-import random
+import math
 from sklearn import metrics
 
 
@@ -63,4 +63,45 @@ class LocalUpdate(object):
                 batch_loss.append(loss.item())
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
         return net.state_dict(), sum(epoch_loss) / len(epoch_loss)
+
+class SGDLocalUpdate(object):
+    def __init__(self, args, dataset=None, idxs=None):
+        self.args = args
+        self.loss_func = nn.CrossEntropyLoss()
+        self.selected_clients = []
+        self.ldr_train = DataLoader(DatasetSplit(dataset, idxs), batch_size=self.args.local_bs, shuffle=True)
+
+    def train(self, net, straggle=False, pts=3):
+        net.train()
+        # train and update
+        optimizer = torch.optim.SGD(net.parameters(), lr=self.args.lr, momentum=self.args.momentum)
+        # optimizer = torch.optim.Adam(net.parameters(), lr=0.005)
+
+        local_pts = self.args.local_pts
+        if straggle==True:
+            local_pts = pts
+
+        batch_loss = []
+
+        batch_num = len(self.ldr_train)
+        train_batch_num = math.floor(batch_num * local_pts / self.args.local_pts)
+        print("{} / {} data will be trained".format(local_pts, self.args.local_pts))
+        print("Data are divided into {} batches, {} will be trained".format(batch_num, train_batch_num))
+
+        for batch_idx, (images, labels) in enumerate(self.ldr_train):
+            if batch_idx >= train_batch_num:
+                break;
+            images, labels = images.to(self.args.device), labels.to(self.args.device)
+            net.zero_grad()
+            log_probs = net(images)
+            loss = self.loss_func(log_probs, labels)
+            loss.backward()
+            optimizer.step()
+            if self.args.verbose and batch_idx % 10 == 0:
+                print('Update Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    iter, batch_idx * len(images), len(self.ldr_train.dataset),
+                           100. * batch_idx / len(self.ldr_train), loss.item()))
+            batch_loss.append(loss.item())
+        epoch_loss = sum(batch_loss)/len(batch_loss)
+        return net.state_dict(), epoch_loss
 

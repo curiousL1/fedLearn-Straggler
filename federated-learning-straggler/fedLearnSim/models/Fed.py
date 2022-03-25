@@ -30,7 +30,6 @@ def FedAvgV1(w, total_data_sum=0, user_idx_this_round=[1, 2, 3, 4], dict_users=N
         w_avg[k] = torch.div(w_avg[k], total_data_sum)
     return w_avg
 
-
 def FedAvg(w):
     len_of_w = len(w)
     w_avg = copy.deepcopy(w[0])
@@ -39,3 +38,13 @@ def FedAvg(w):
             w_avg[k] += w[i][k]
         w_avg[k] = torch.div(w_avg[k], len_of_w)
     return w_avg
+
+
+def FedSGD(g):
+    len_of_g = len(g)
+    g_avg = copy.deepcopy(g[0])
+    for k in g_avg.keys():
+        for i in range(1, len_of_g):
+            g_avg[k] += g[i][k]
+        g_avg[k] = torch.div(g_avg[k], len_of_g)    
+    return g_avg
