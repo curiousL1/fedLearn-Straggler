@@ -148,6 +148,10 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     acc_global_model = []
     time_rounds = []
 
+    # train start
+    optimizer = torch.optim.SGD(global_net.parameters(), lr=args.lr, momentum=args.momentum)
+    ###################################################################################################
+    # warm-up
     n_ep = 2
     for round in range(n_ep):
         print("warm-up round {} start:".format(round))
@@ -170,8 +174,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
             for idx in user_idx_this_round:     # 遍历可选的设备
                 print("user {} local training".format(idx))
                 local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
-                grad = W_Sub(weight, global_net.state_dict())
+                grad, loss, batch_num = local.train(net=copy.deepcopy(global_net).to(args.device)) 
+                grad = W_Mul(1.0 / batch_num, grad) # local update 的时候梯度累加后没有进行平均
                 if args.all_clients:
                     grad_locals[idx] = copy.deepcopy(grad)
                 else:
@@ -180,12 +184,14 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
             # Local Training end
 
             # On Server:
-            # Global Model Aggregation 
+            # Global Gradient Aggregation 
             g_glob = FedSGD(g=grad_locals)
-            w_glob = W_Add(w_glob, g_glob)
-            # copy weight to net_glob
-            global_net.load_state_dict(w_glob)
 
+            optimizer.zero_grad()   # 清空 global_net 的梯度
+            for name, temp_params in global_net.named_parameters():
+                temp_params.grad = g_glob[name] # 梯度更新
+            optimizer.step() # 模型更新
+            
             # print loss
             loss_avg = sum(loss_locals) / len(loss_locals)
             # loss_avg_client.append(loss_avg)
@@ -245,8 +251,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
                 print("user {} local training".format(idx))
 
                 local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device))
-                grad = W_Sub(weight, global_net.state_dict())
+                grad, loss, batch_num = local.train(net=copy.deepcopy(global_net).to(args.device))
+                grad = W_Mul(1.0 / batch_num, grad) # local update 的时候梯度每个partition求和后没有进行平均
                 if args.all_clients:
                     grad_locals[idx] = copy.deepcopy(grad)
                 else:
@@ -264,8 +270,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
                 strag_local_pts = Get_local_epoch(times_all=time_all_client, round_time=time_thres, 
                                                     idx=idx, local_ep=args.local_pts, round=round_h)
                 local = SGDLocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx])
-                weight, loss = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=hasTimer, pts=strag_local_pts)
-                grad = W_Sub(weight, global_net.state_dict())
+                grad, loss, batch_num = local.train(net=copy.deepcopy(global_net).to(args.device), straggle=hasTimer, pts=strag_local_pts)
+                grad = W_Mul(1.0 / batch_num, grad) # local update 的时候梯度每个partition求和后没有进行平均
                 if args.all_clients:
                     grad_locals_strag[idx] = copy.deepcopy(grad)
                 else:
@@ -277,19 +283,28 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
             # Global Model Aggregation 
             g_glob = FedSGD(g=grad_locals)
             
+            optimizer.zero_grad()
             if isFullSGD or isKSGD:
-                w_glob = W_Add(w_glob, g_glob)
-                global_net.load_state_dict(w_glob)
+                # g_glob = W_Mul(args.lr, g_glob)
+                # w_glob = W_Sub(w_glob, g_glob)
+                # global_net.load_state_dict(w_glob)
+                for name, temp_params in global_net.named_parameters():
+                    temp_params.grad = g_glob[name]
+                optimizer.step()
             else:
                 # LGC:使用 compensation 进行补偿
                 if round == 0:
                     g_glob_comped = copy.deepcopy(g_glob)
                 else:
-                    g_glob_comped = W_Sub(g_glob, g_compensation) # 依据求梯度的方式，符号应该是反的
+                    g_glob_comped = W_Add(g_glob, g_compensation)
 
                 # copy weight to net_glob
-                w_glob = W_Add(w_glob, g_glob_comped)
-                global_net.load_state_dict(w_glob)
+                # g_glob = W_Mul(args.lr, g_glob)
+                # w_glob = W_Sub(w_glob, g_glob_comped)
+                # global_net.load_state_dict(w_glob)
+                for name, temp_params in global_net.named_parameters():
+                    temp_params.grad = g_glob_comped[name]
+                optimizer.step()
 
                 # LGC:依据（上一轮的） grad_locals_strag，w_glob 计算出 compensation
                 # 算法中属于下一 round，放在此处可以避免更多变量的声明
@@ -383,9 +398,9 @@ def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, us
 
 if __name__ == '__main__':
     #################################### Exp.1
-    multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False) # keep wrong
     multiSimulateMain(c=3, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
     multiSimulateMain(c=5, h=1, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
     multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
     multiSimulateMain(c=5, h=30, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
@@ -409,7 +424,7 @@ if __name__ == '__main__':
     # multiSimulateMain(c=10, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=1, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    # multiSimulateMain(c=5, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    multiSimulateMain(c=5, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=10, h=30, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
 

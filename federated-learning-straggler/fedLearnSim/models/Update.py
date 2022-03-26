@@ -74,7 +74,7 @@ class SGDLocalUpdate(object):
     def train(self, net, straggle=False, pts=3):
         net.train()
         # train and update
-        optimizer = torch.optim.SGD(net.parameters(), lr=self.args.lr, momentum=self.args.momentum)
+        # optimizer = torch.optim.SGD(net.parameters(), lr=self.args.lr, momentum=self.args.momentum)
         # optimizer = torch.optim.Adam(net.parameters(), lr=0.005)
 
         local_pts = self.args.local_pts
@@ -82,26 +82,37 @@ class SGDLocalUpdate(object):
             local_pts = pts
 
         batch_loss = []
+        gradients_local = {}
 
         batch_num = len(self.ldr_train)
         train_batch_num = math.floor(batch_num * local_pts / self.args.local_pts)
         print("{} / {} data will be trained".format(local_pts, self.args.local_pts))
         print("Data are divided into {} batches, {} will be trained".format(batch_num, train_batch_num))
-
+     
         for batch_idx, (images, labels) in enumerate(self.ldr_train):
-            if batch_idx >= train_batch_num:
-                break;
-            images, labels = images.to(self.args.device), labels.to(self.args.device)
+
+            if batch_idx + 1 >= train_batch_num:
+                break
+            
             net.zero_grad()
+            images, labels = images.to(self.args.device), labels.to(self.args.device)
             log_probs = net(images)
             loss = self.loss_func(log_probs, labels)
-            loss.backward()
-            optimizer.step()
-            if self.args.verbose and batch_idx % 10 == 0:
-                print('Update Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    iter, batch_idx * len(images), len(self.ldr_train.dataset),
-                           100. * batch_idx / len(self.ldr_train), loss.item()))
+            loss.backward() 
+            # 累加计算出的梯度，时间足够训练的情况下有 len(self.ldr_train) 个
+            if batch_idx == 0:
+                for name, temp_params in net.named_parameters():
+                    # print("grad names:", name)
+                    gradients_local[name] = temp_params.grad
+            else:
+                for name, temp_params in net.named_parameters():
+                    gradients_local[name] += temp_params.grad
+
+            ########################################################################
+            # optimizer.step()
+            # 避免本地进行模型更新
+            ########################################################################
             batch_loss.append(loss.item())
         epoch_loss = sum(batch_loss)/len(batch_loss)
-        return net.state_dict(), epoch_loss
+        return gradients_local, epoch_loss, batch_num
 
