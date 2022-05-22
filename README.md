@@ -1,2 +1,2 @@
 # fedLearn-Straggler
- A simple simulation for straggler(s) in federated learning
+ A simulation for straggler(s) processing using FedReload algorithm.
