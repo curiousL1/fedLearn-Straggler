@@ -62,6 +62,9 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     args.num_users  = args_usernumber
     args.iid        = args_iid                 # non-iid
 
+    # 为服务器聚合设置时间
+    svr_time = threshold_K * 0.5 + 3
+
     print("cuda is available : ", torch.cuda.is_available())        # 本次实验使用的 GPU 型号为 RTX 2060 SUPER，内存专用8G、共享8G
 
     WriteToTxt("K-SGD? {}, Full-SGD? {}\n".format(isKSGD, isFullSGD), record_name)
@@ -170,6 +173,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
     #####################################################################################################################
     # warm up n_ep epoch
     n_ep = 2
+    if args.iid:
+        n_ep = 0
     for round in range(n_ep):
         print("warm-up round {} start:".format(round))
 
@@ -249,6 +254,8 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
         else:
             user_idx_Straggle, time_thres = Find_stragglers_id_and_time_thres(times_all=time_all_client, round=round_h, strag_size=args.num_users-threshold_K)
             user_idx_this_round = np.setdiff1d(user_idx, user_idx_Straggle, assume_unique=True)
+        
+        time_thres += svr_time
 
         print("user_idx:", user_idx)
         print("user_idx_this_round:", user_idx_this_round)
@@ -392,7 +399,7 @@ def FedLearnSimulate(args_model='cnn', args_dataset='mnist', record_name="record
 def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, user=10, iid=False):
     # e.g. args_model='cnn', args_dataset='mnist', record_name="record", args_usernumber=10, args_iid=False
     # e.g. map_file=None, threshold_K=7, strag_h=1, isKSGD=False, isFullSGD=False, hasTimer=True
-    
+    thresK = int(0.7 * user)
     # 记录文件名  (+.txt/.npy)
     other_c = c - 1
     argsStr = dataset + model + 'C' + str(c) + 'H' + str(h) + 'N' + str(user)
@@ -403,9 +410,9 @@ def multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=True, us
     lgc_rc = "lgc_" + argsStr
     k_rc = "k_" + argsStr
     full_rc = "full_" + argsStr
-    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=lgc_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, hasTimer=timer)
-    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=k_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isKSGD=True, hasTimer=timer)
-    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=full_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isFullSGD=True, hasTimer=timer)
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=lgc_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, hasTimer=timer, threshold_K=thresK)
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=k_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isKSGD=True, hasTimer=timer, threshold_K=thresK)
+    FedLearnSimulate(args_dataset=dataset, args_model=model, record_name=full_rc, args_usernumber=user, args_iid=iid, strag_h=h, other_class=other_c, isFullSGD=True, hasTimer=timer, threshold_K=thresK)
     print(argsStr + " end")
 
 
@@ -413,10 +420,14 @@ if __name__ == '__main__':
     #################################### Exp.1
     # multiSimulateMain(c=1, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False) #wrong
     # multiSimulateMain(c=3, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False) #done
-    multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=30, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=5, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=1, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=30, dataset='cifar', model='resnet', timer=False, user=10, iid=False)
+
+    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=20, iid=False)
+    multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=False, user=40, iid=False)
+    # multiSimulateMain(c=10, h=10, dataset='cifar', model='resnet', timer=True, user=10, iid=True)
 
     # multiSimulateMain(c=1, h=1, dataset='cifar', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=1, dataset='cifar', model='cnn', timer=False, user=10, iid=False)
@@ -434,12 +445,13 @@ if __name__ == '__main__':
     # multiSimulateMain(c=1, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=5, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=1, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=1, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=3, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
     # multiSimulateMain(c=5, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
-    multiSimulateMain(c=10, h=30, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
+    # multiSimulateMain(c=10, h=30, dataset='mnist', model='cnn', timer=False, user=10, iid=False)
 
+    # multiSimulateMain(c=10, h=10, dataset='mnist', model='cnn', timer=True, user=10, iid=True)
     ##########################done
     
