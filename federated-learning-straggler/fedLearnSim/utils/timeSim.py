@@ -9,7 +9,7 @@
 import math
 import numpy as np
 import matplotlib.pyplot as plt
-
+import copy
 
 def time_test():
     '''
@@ -64,7 +64,7 @@ def test_one_client(datasize=100, a_k=0.01):
     # miu_k = 1 / a_k
     # miu_k = 400
 
-    client1 = client(datasize=datasize, a_k=a_k, miu_k=miu_k, local_epoch=local_epoch)
+    client1 = Client_Sim(datasize=datasize, a_k=a_k, miu_k=miu_k, local_epoch=local_epoch)
 
     lamda = client1.get_lamda()
     print(lamda)
@@ -86,7 +86,7 @@ def test_multiple_clients():
     test_one_client(datasize=900, a_k=0.001)
 
 
-class client():
+class Client_Sim():
     '''
     设定是一共10个client，可以视作cross-silo形式
     10个client，随机出datasize出来，然后固定各client的datasize
@@ -97,33 +97,62 @@ class client():
     可以考虑设置多一点，设置800为basic value，然后再设置一个random让数值从800-900之间变换
     a_k-->计算能力，单位时间处理的数据条数
     '''
-    def __init__(self, datasize, a_k, miu_k, local_epoch):
+    def __init__(self, datasize, a_k, miu_k, local_epoch, rounds):
         self.a_k    = a_k                       # 表示计算能力的系数，乘以datasize从而表示处理完一次本地数据需要消耗的时间
         self.miu_k  = miu_k                     # 一个系数，除以(local_epoch*datasize)从而表示指数分布的lamda
         self.local_epoch    = local_epoch       # 本地训练的epoch
         self.excution_time  = 0                 # 当前轮次设备的执行时间（初始化为）
         self.datasize       = datasize          # 该设备的数据集大小（表示有多少条数据）
+        self.rounds         = rounds            # FL的总rounds
 
-    def set_coefficient(self, datasize, a_k, miu_k, local_epoch):
+    def set_coefficient(self, datasize, a_k, miu_k, local_epoch, rounds):
         self.a_k    = a_k                   # 表示计算能力的系数，乘以datasize从而表示处理完一次本地数据需要消耗的时间
         self.miu_k  = miu_k                 # 一个系数，除以(local_epoch*datasize)从而表示指数分布的lamda
         self.local_epoch    = local_epoch   # 本地训练的epoch
         self.excution_time  = 0             # 当前轮次设备的执行时间（初始化为）
         self.datasize       = datasize      # 该设备的数据集大小（表示有多少条数据）
+        self.rounds         = rounds        # FL的总rounds
 
     def get_lamda(self):
         return (self.miu_k / (self.local_epoch * self.datasize))
 
-    def get_execution_time(self, round=1):
+    def get_execution_time(self):
         '''
         获取一个设备的所有round的执行时间
-        round指的是一共运行多少个FL communication round
         '''
         lamda = self.get_lamda()
-        temp_time = np.random.exponential(1/lamda, size=round)       # 生成一个temp_time = execution_time - local_epoch * a_k * datasize
+        temp_time = np.random.exponential(1/lamda, size=self.rounds)       # 生成一个temp_time = execution_time - local_epoch * a_k * datasize
         execution_time = temp_time + self.local_epoch * self.a_k * self.datasize
         return execution_time
 
+def Get_local_epoch(times_all, round_time, idx, local_ep, round=1):
+    '''
+    获取一个设备的某一round的本地epoch
+    SGD框架下则是本地可训练的partition数量
+    '''
+    time = times_all[idx][round - 1]
+    epoch = math.floor(float(round_time / time) * local_ep)
+    return epoch
+
+def Find_stragglers_id_and_time_thres(times_all, round=1, strag_size=3):
+    '''
+    获取round轮时的离群者id和轮次时间阈值
+    '''
+    times = []
+    for i in range(len(times_all)):
+        times.append(times_all[i][round-1])
+    
+    print("round {} time sim: ".format(round), times)
+    t = copy.deepcopy(times)
+    Strag_id = []
+    for _ in range(strag_size):
+        number = max(t)
+        index = t.index(number)
+        t[index] = 0
+        Strag_id.append(index)
+    threshold_time = max(t)
+    t = []
+    return Strag_id, threshold_time
 
 if __name__ == "__main__":
     # time_test()

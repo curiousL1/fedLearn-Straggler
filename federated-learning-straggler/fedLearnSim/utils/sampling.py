@@ -92,7 +92,7 @@ def mnist_noniid_modified(dataset, num_users, min_train=200,
     # random_seed = np.random.randint(low=30000, high=40000)
     # print("random_seed: ", random_seed)
     # np.random.seed(random_seed)  # 之前固定了0
-    np.random.seed(0)
+    np.random.seed(1)
 
     num_shards, num_imgs = 10, 6000  # 10类图片，每类6000张
     # min_train = 200  # 最少200张
@@ -114,9 +114,12 @@ def mnist_noniid_modified(dataset, num_users, min_train=200,
         # 这里的随机数量，要修改成指定的数量-->有num_users个设备(users)，对应index的那个user指定一个datasize（通过读取文件实现）
         datasize = np.random.randint(min_train, max_train + 1)  # 随机数量
         # datasize = int(map_file.iloc[i, map_file.columns.get_loc('datasize')])  # map_file['datasize'].sum()
-        main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        # main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        main_label = i % 10 # 均匀分配10个主类到10*N个worker
         print("user: %d, data_size: %d, main_label: %d" %(i, datasize, main_label))
 
+        if other == 0:
+            main_label_prop = 1
         # 映射表仅仅决定datasize，不决定main_label
         main_label_size = int(np.floor(datasize * main_label_prop))
         other_label_size = datasize - main_label_size
@@ -126,6 +129,9 @@ def mnist_noniid_modified(dataset, num_users, min_train=200,
         idx_begin = np.random.randint(0, num_imgs - main_label_size) + main_label * num_imgs
         # print("idx_begin: %d, begin class: %d, end class: %d" %(idx_begin, idxs_labels[1][idx_begin], idxs_labels[1][idx_begin + main_label_size]))
         dict_users[i] = np.concatenate((dict_users[i], idxs[idx_begin : idx_begin+main_label_size]), axis=0)
+
+        if other == 0:
+            continue
 
         # other label idx array
         other_label_dict = np.zeros(other_label_size, dtype='int64')
@@ -164,7 +170,7 @@ def mnist_noniid_modified_Vtest(dataset, num_users, min_train=200, max_train=100
     # random_seed = np.random.randint(low=30000, high=40000)
     # print("random_seed: ", random_seed)
     # np.random.seed(random_seed)  # 之前固定了0
-    np.random.seed(0)
+    np.random.seed(1)
 
     num_shards, num_imgs = 10, 6000  # 10类图片，每类6000张
 
@@ -276,25 +282,22 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
 
     数量分布随机从min_train到max_train
 
-    每个client 80%数据为一类图片， 20%为其他类图片
+    每个client 80%（main_label_prop）数据为一类图片， 20%为其他类图片
 
     """
     # random_seed = np.random.randint(low=30000, high=40000)
     # print("random_seed: ", random_seed)
     # np.random.seed(random_seed)  # 之前固定了0
-    np.random.seed(0)
+    np.random.seed(1)
 
     num_shards, num_imgs = 10, 5000  # 10类图片，每类6000张
 
-    # min_train = 200  # 最少200张
-    # max_train = 1000  # 最多1000张
-    # main_label_prop = 0.8  # 80%来自同一张图片，20%均匀来自其他9类图片
 
     dict_users = {i: np.array([], dtype='int64') for i in range(num_users)}
     idxs = np.arange(num_shards * num_imgs)
 
-    # labels = np.array(dataset.targets)  # 修改dataset.target_transform无法解决
-    labels = np.array(dataset.train_labels)   # 上面的labels改为这一行的labels（模仿mnist）
+    labels = np.array(dataset.targets)  # 修改dataset.target_transform无法解决
+    # labels = np.array(dataset.train_labels)   # 上面的labels改为这一行的labels（模仿mnist）
     print("labels:\n", labels)
     print("len: ", len(labels))
     print(type(labels))
@@ -315,10 +318,13 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
         datasize = np.random.randint(min_train, max_train + 1)  # 随机数量
         # datasize = int(map_file.iloc[i, map_file.columns.get_loc('datasize')])
         # main_label = int(map_file.iloc[i, map_file.columns.get_loc('main_label')])    # 已经确定好的
-        main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        # main_label = np.random.randint(0, 10)  # 0-9随机选一个为主类
+        main_label = i % 10 # 均匀分配10个主类到10*N个worker
         print("user: %d, data_size: %d, main_label: %d" % (i, datasize, main_label))
         # df.loc[i, ['main_label']] = main_label
 
+        if other == 0:
+            main_label_prop = 1
         main_label_size = int(np.floor(datasize * main_label_prop))
         other_label_size = datasize - main_label_size
         # print("user: %d, main_label_size: %d, other_label_size: %d" % (i, main_label_size, other_label_size))
@@ -330,12 +336,16 @@ def cifar_noniid(dataset, num_users, min_train=50, max_train=1000, main_label_pr
                                         idxs[(idx_begin):(idx_begin+main_label_size)]), axis=0)
 
         # other label idx array
+        if other == 0:
+            continue
+        
         other_label_dict = np.zeros(other_label_size, dtype='int64')
 
         other_nine_label = np.delete(np.arange(10), main_label)
 
 
         other_label_class = np.random.choice(other_nine_label, size=other, replace=False)
+        print("other label: {}".format(other_label_class))
 
         count = 0
 
